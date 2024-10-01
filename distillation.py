@@ -305,15 +305,15 @@ def distillation_x0(args):
                 pbar.set_description(f"loss: {total_loss:.4f}")
                 optim.step()
         
-            if ep % args.save_step == 0:
+            if args.save_step>0 and ep % args.save_step == 0:
                 save_checkpoint(S_model, optim, ep, args.logdir)      
                 
-            if ep % args.sample_step == 0:
+            if args.sample_step and ep % args.sample_step == 0:
                 S_model.eval()
                 sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
                 
             ## eval ##
-            if ep % args.eval_step == 0:
+            if args.eval_step > 0 and ep % args.eval_step == 0:
                 log_path = f"{args.save_dir}/classifier_eval.log"
                 logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
                 
