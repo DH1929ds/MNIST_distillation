@@ -44,11 +44,11 @@ class distillation_DDPM_trainer_x0(nn.Module):
             self.S_model.train()
             S_output, S_features, S_cemb1, S_cemb2 = self.S_model(x0,c,t,noise,context_mask)
                             
-            output_loss = self.training_loss(S_output, T_output)
+            output_loss = self.training_loss(S_output, T_output.detach())
             
             feature_loss = 0
             for student_feature, teacher_feature in zip(S_features, T_features):
-                feature_loss += self.training_loss(student_feature, teacher_feature)
+                feature_loss += self.training_loss(student_feature, teacher_feature.detach())
                 
             total_loss = output_loss + feature_loss_weight * feature_loss / len(S_features)
             
@@ -66,7 +66,7 @@ class distillation_DDPM_trainer_x0(nn.Module):
             self.S_model.train()
             S_output, S_features, S_cemb1, S_cemb2 = self.S_model(x0,c,t,noise,context_mask)
                 
-            output_loss = self.training_loss(S_output, T_output)
+            output_loss = self.training_loss(S_output, T_output.detach())
             total_loss = output_loss
         
         if self.inversion_loss:
