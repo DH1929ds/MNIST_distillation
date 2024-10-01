@@ -99,10 +99,10 @@ class distillation_DDPM_trainer_x0(nn.Module):
                 T_output, T_features = self.T_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
                 S_output, S_features = self.S_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
                 
-                update_c_loss += self.training_loss(S_output, T_output)
+                update_c_loss += self.training_loss(S_output, T_output.detach())
                 
                 for student_feature, teacher_feature in zip(S_features, T_features):
-                    update_c_loss += self.training_loss(student_feature, teacher_feature)
+                    update_c_loss += self.training_loss(student_feature, teacher_feature.detach())
                     
             total_loss += update_c_loss
 
