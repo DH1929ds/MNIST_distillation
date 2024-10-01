@@ -210,7 +210,32 @@ class ContextUnet(nn.Module):
         
         features.extend([feature1, feature2, up1, up2])
         return out, features, cemb1, cemb2
+    
+    def forward_with_cemb(self, x, cemb1, cemb2, t):
+        # x is (noisy) image, c is context label, t is timestep, 
+        # context_mask says which samples to block the context on
+        features = []
+        
+        x = self.init_conv(x)
+        down1, feature1 = self.down1(x)
+        down2, feature2 = self.down2(down1)
+        hiddenvec = self.to_vec(down2)
+        
+        # embed context, time step
+        temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
+        temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
+        
+        # could concatenate the context embedding here instead of adaGN
+        # hiddenvec = torch.cat((hiddenvec, temb1, cemb1), 1)
 
+        up1 = self.up0(hiddenvec)
+        # up2 = self.up1(up1, down2) # if want to avoid add and multiply embeddings
+        up2 = self.up1(cemb1*up1+ temb1, down2)  # add and multiply embeddings
+        up3 = self.up2(cemb2*up2+ temb2, down1)
+        out = self.out(torch.cat((up3, x), 1))
+        
+        features.extend([feature1, feature2, up1, up2])
+        return out, features
 
 def ddpm_schedules(beta1, beta2, T):
     """
@@ -276,6 +301,18 @@ class DDPM(nn.Module):
         return output, features, cemb1, cemb2
         # return MSE between added noise, and our predicted noise
         #return self.loss_mse(noise, self.nn_model(x_t, c, _ts / self.n_T, context_mask))
+        
+        
+    def forward_with_cemb(self, x, cemb1, cemb2, t, noise):
+        
+        x_t = (
+            self.sqrtab[t, None, None, None] * x
+            + self.sqrtmab[t, None, None, None] * noise
+        )
+        
+        output, features = self.nn_model.forward_with_cemb(x_t, cemb1, cemb2, t / self.n_T)
+        
+        return output, features
 
     def sample(self, n_sample, size, device, guide_w = 0.0):
         # we follow the guidance sampling scheme described in 'Classifier-Free Diffusion Guidance'

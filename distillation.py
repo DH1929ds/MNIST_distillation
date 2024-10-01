@@ -58,6 +58,10 @@ def get_parser():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for training")
     parser.add_argument("--feature_loss_weight", type=float, default=0.1, help="feature loss weighting")
     parser.add_argument("--inversion_loss_weight", type=float, default=0.1, help="inversion loss weighting")
+    
+    parser.add_argument("--update_c", type=int, default=0, help="Number of cemb update")
+    parser.add_argument("--update_c_rate", type=float, default=1e-4, help="cemb_update rate")
+    
 
     # eval
     parser.add_argument("--eval_step", type=int, default=50, help='eval step')
@@ -276,7 +280,7 @@ def distillation_x0(args):
         dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
 
         # trainer 설정
-        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
+        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss, update_c = args.update_c, update_c_rate = args.update_c_rate)
 
         
         # training Loop
