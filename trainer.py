@@ -87,11 +87,20 @@ class distillation_DDPM_trainer_x0(nn.Module):
             update_c_loss = 0
             for i in range(self.update_c):
                 
+                # print('T_cemb1.shape', T_cemb1.shape)
+                # print('T_cemb2.shape', T_cemb2.shape)
+                # print('T_cemb1[0]', T_cemb1[0].view(-1))
+                # print('T_cemb2[0]', T_cemb2[0].view(-1))
+                
+                
                 T_optimize_loss = self.training_loss(T_output, noise)
                 T_grad_cemb1, T_grad_cemb2 = torch.autograd.grad(T_optimize_loss, [T_cemb1, T_cemb2])
                 
                 T_cemb1 = (T_cemb1 - T_grad_cemb1*self.update_c_rate).detach()
                 T_cemb2 = (T_cemb2 - T_grad_cemb2*self.update_c_rate).detach()
+
+                # print('grad', T_grad_cemb1[0].view(-1)*self.update_c_rate)
+                # print('grad', T_grad_cemb2[0].view(-1)*self.update_c_rate)
                 
                 T_cemb1.requires_grad_(True)
                 T_cemb2.requires_grad_(True)
