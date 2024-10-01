@@ -260,7 +260,7 @@ def distillation_x0(args):
                 
             ## eval ##
             if ep % args.eval_step == 0:
-                log_path = f"{args.savedir}/classifier_eval.log"
+                log_path = f"{args.save_dir}/classifier_eval.log"
                 logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
                 
                 S_model.eval()
@@ -314,7 +314,7 @@ def distillation_x0(args):
                 
             ## eval ##
             if ep % args.eval_step == 0:
-                log_path = f"{args.savedir}/classifier_eval.log"
+                log_path = f"{args.save_dir}/classifier_eval.log"
                 logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
                 
                 S_model.eval()

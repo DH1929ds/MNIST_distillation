@@ -105,6 +105,7 @@ class distillation_DDPM_trainer_x0(nn.Module):
                     update_c_loss += self.training_loss(student_feature, teacher_feature.detach())
                     
             total_loss += update_c_loss
+            total_loss /= (self.update_c+1)
 
         return output_loss, total_loss
             
