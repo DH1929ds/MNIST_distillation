@@ -97,7 +97,7 @@ class distillation_DDPM_trainer_x0(nn.Module):
                 T_cemb2.requires_grad_(True)
                 
                 T_output, T_features = self.T_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
-                S_output, S_features = self.T_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
+                S_output, S_features = self.S_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
                 
                 update_c_loss += self.training_loss(S_output, T_output)
                 
