@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from torchvision.utils import save_image, make_grid
-
+import torchvision.utils as vutils
+import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 from script import ContextUnet, DDPM
 import argparse, sys, os
@@ -59,8 +60,9 @@ def get_parser():
     parser.add_argument("--feature_loss_weight", type=float, default=0.1, help="feature loss weighting")
     parser.add_argument("--inversion_loss_weight", type=float, default=0.1, help="inversion loss weighting")
     
-    parser.add_argument("--update_c", type=int, default=0, help="Number of cemb update")
-    parser.add_argument("--update_c_rate", type=float, default=1e-4, help="cemb_update rate")
+    parser.add_argument("--update_c_emb", type=int, default=0, help="Number of cemb update")
+    parser.add_argument("--update_c_emb_rate", type=float, default=1e-4, help="cemb_update rate")
+    parser.add_argument("--update_c_emb_loss_weight", type=float, default=0.1, help="cemb_update loss weight")
     
 
     # eval
@@ -84,7 +86,7 @@ def precaching(args):
     cache_size = args.cache_n
     cache_per_timestep = int(cache_size/n_T)
     
-    img_cache = torch.zeros((cache_size, 1, 28, 28), dtype=torch.float32, device=device)  # MNIST 이미지 크기
+    img_cache = torch.randn((cache_size, 1, 28, 28), dtype=torch.float32, device=device)  # MNIST 이미지 크기
     t_cache = torch.ones((cache_size,), dtype=torch.float32, device=device)*(n_T-1)
     
     selected_tensor = torch.tensor([0,1,2,4,5,6,7,8,9], device=device)
@@ -133,6 +135,32 @@ def precaching(args):
         torch.save(class_cache, os.path.join(save_dir, f"mnist_labels.pt"))
 
         print(f"Saved MNIST images, timestep and labels to {save_dir}")
+        # 저장할 이미지 인덱스들을 모두 모아서 하나의 리스트로 구성
+        grid_indices = []
+        for i in range(10):
+            start_idx = i * 40 * cache_per_timestep
+            end_idx = start_idx + 10
+            grid_indices.extend(range(start_idx, end_idx))
+
+        # 선택된 인덱스의 이미지를 가져옴
+        selected_imgs = img_cache[grid_indices].cpu()  # GPU에서 CPU로 이동
+
+        # 이미지 그리드를 생성 (nrow=10으로 한 줄에 10개의 이미지)
+        grid_img = vutils.make_grid(selected_imgs, nrow=10, padding=2, normalize=True)
+
+        # 그리드 이미지를 저장하기 위해 matplotlib 사용
+        plt.figure(figsize=(12, 12))
+        plt.imshow(np.transpose(grid_img.numpy(), (1, 2, 0)))  # 텐서 차원 변환 [C, H, W] -> [H, W, C]
+        plt.axis('off')  # 축 숨기기
+
+        # 그리드 이미지를 파일로 저장
+        save_dir = f"./{args.cache_dir}/grids"
+        os.makedirs(save_dir, exist_ok=True)  # 디렉토리가 없으면 생성
+        save_path = os.path.join(save_dir, "combined_grid_image.png")
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+        print(f"Saved combined grid image to {save_path}")
         
 def precaching_x0(args):
     device = torch.device('cuda:0')
@@ -280,7 +308,8 @@ def distillation_x0(args):
         dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
 
         # trainer 설정
-        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss, update_c = args.update_c, update_c_rate = args.update_c_rate)
+        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss, 
+                                               update_c_emb = args.update_c_emb, update_c_emb_rate = args.update_c_emb_rate, update_c_emb_loss_weight = args.update_c_emb_loss_weight)
 
         
         # training Loop

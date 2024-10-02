@@ -6,7 +6,7 @@ from gpu_log import GPUMonitor
 
 class distillation_DDPM_trainer_x0(nn.Module):
     
-    def __init__(self, T_model, S_model, distill_features = False, inversion_loss=False, update_c = 0, update_c_rate = 1e-4):
+    def __init__(self, T_model, S_model, distill_features = False, inversion_loss=False, update_c_emb = 0, update_c_emb_rate = 1e-4, update_c_emb_loss_weight = 0.1):
 
         super().__init__()
 
@@ -16,8 +16,9 @@ class distillation_DDPM_trainer_x0(nn.Module):
         self.inversion_loss = inversion_loss
         self.training_loss = nn.MSELoss()
         self.drop_prob=0.1
-        self.update_c = update_c
-        self.update_c_rate = update_c_rate
+        self.update_c_emb = update_c_emb
+        self.update_c_emb_rate = update_c_emb_rate
+        self.update_c_emb_loss_weight = update_c_emb_loss_weight
         
     def forward(self, x0, c, t, noise, feature_loss_weight = 0.1, inversion_loss_weight=0.1):
         """
@@ -31,7 +32,7 @@ class distillation_DDPM_trainer_x0(nn.Module):
         if self.distill_features:
             # Teacher model forward pass (in evaluation mode)
             self.T_model.eval()
-            if self.inversion_loss or self.update_c:
+            if self.inversion_loss or self.update_c_emb:
                 T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise,context_mask)
                 
             else:
@@ -54,7 +55,7 @@ class distillation_DDPM_trainer_x0(nn.Module):
             
         else:
             self.T_model.eval()
-            if self.inversion_loss or self.update_c:
+            if self.inversion_loss or self.update_c_emb:
                 T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise,context_mask)
                 
             else:
@@ -83,9 +84,9 @@ class distillation_DDPM_trainer_x0(nn.Module):
             
             total_loss += inversion_loss_weight * (grad_loss1 + grad_loss2)
         
-        if self.update_c:
-            update_c_loss = 0
-            for i in range(self.update_c):
+        if self.update_c_emb:
+            update_c_emb_loss = 0
+            for i in range(self.update_c_emb):
                 
                 # print('T_cemb1.shape', T_cemb1.shape)
                 # print('T_cemb2.shape', T_cemb2.shape)
@@ -96,11 +97,11 @@ class distillation_DDPM_trainer_x0(nn.Module):
                 T_optimize_loss = self.training_loss(T_output, noise)
                 T_grad_cemb1, T_grad_cemb2 = torch.autograd.grad(T_optimize_loss, [T_cemb1, T_cemb2])
                 
-                T_cemb1 = (T_cemb1 - T_grad_cemb1*self.update_c_rate).detach()
-                T_cemb2 = (T_cemb2 - T_grad_cemb2*self.update_c_rate).detach()
+                T_cemb1 = (T_cemb1 - T_grad_cemb1*self.update_c_emb_rate).detach()
+                T_cemb2 = (T_cemb2 - T_grad_cemb2*self.update_c_emb_rate).detach()
 
-                # print('grad', T_grad_cemb1[0].view(-1)*self.update_c_rate)
-                # print('grad', T_grad_cemb2[0].view(-1)*self.update_c_rate)
+                # print('grad', T_grad_cemb1[0].view(-1)*self.update_c_emb_rate)
+                # print('grad', T_grad_cemb2[0].view(-1)*self.update_c_emb_rate)
                 
                 T_cemb1.requires_grad_(True)
                 T_cemb2.requires_grad_(True)
@@ -108,16 +109,15 @@ class distillation_DDPM_trainer_x0(nn.Module):
                 T_output, T_features = self.T_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
                 S_output, S_features = self.S_model.forward_with_cemb(x0, T_cemb1, T_cemb2, t, noise)
                 
-                update_c_loss += self.training_loss(S_output, T_output.detach())
+                update_c_emb_loss += self.training_loss(S_output, T_output.detach())
                 
                 feature_loss = 0
                 for student_feature, teacher_feature in zip(S_features, T_features):
                     feature_loss += self.training_loss(student_feature, teacher_feature.detach())
                 
-                update_c_loss += feature_loss_weight * feature_loss / len(S_features)
+                update_c_emb_loss += feature_loss_weight * feature_loss / len(S_features)
                     
-            total_loss += update_c_loss
-            total_loss /= (self.update_c+1)
+            total_loss += update_c_emb_loss*self.update_c_emb_loss_weight/self.update_c_emb
 
         return output_loss, total_loss
             
