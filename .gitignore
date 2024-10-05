@@ -7,3 +7,6 @@ logs
 *ipynb*
 *.log
 *.pth
+test.py
+*csv
+nohup.out

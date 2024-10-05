@@ -237,6 +237,29 @@ class ContextUnet(nn.Module):
         features.extend([feature1, feature2, up1, up2])
         return out, features
 
+    def c2cemb(self, c):        
+        # One-hot 인코딩: c는 0~9 사이의 정수, num_classes는 self.n_classes로 가정
+        c_one_hot = nn.functional.one_hot(c, num_classes=self.n_classes).type(torch.float)
+        print(self.n_classes)
+        # context_mask 적용
+        c = c_one_hot * -1
+        
+        uncond_c = torch.zeros((1,10),device=c.device)
+        # 마지막 차원에 하나의 새로운 차원 추가 (1차원짜리 0 벡터를 붙임)
+        # zero_context = torch.zeros_like(c_masked[0]).to(c.device)
+        
+        # # 마지막 차원을 기준으로 10차원에서 11차원으로 확장
+        # c = torch.cat([c_masked, zero_context], dim=0)
+        print(c.shape)
+        print(uncond_c.shape)
+        c = torch.cat([c,uncond_c], dim=0)
+        print(c.shape)
+        # embed context, time step
+        cemb1 = self.contextembed1(c)
+        cemb2 = self.contextembed2(c)
+        
+        return cemb1, cemb2
+        
 def ddpm_schedules(beta1, beta2, T):
     """
     Returns pre-computed schedules for DDPM sampling, training process.
@@ -544,15 +567,16 @@ class DDPM(nn.Module):
 
 
 
-    def cache_step(self, xt, c, t, guide_w = 0.0):
+    def cache_step(self, xt, c, t, context_mask=None, guide_w = 0.0):
         
         b, *size ,device = *xt.shape, xt.device
         ind = t.long()
-
-        context_mask = torch.zeros_like(c).to(device)
+        
+        if context_mask == None:
+            context_mask = torch.zeros_like(c).to(device)
         
         if guide_w==0.0:
-            model_output, _, _, _ = self.nn_model(xt, c, t, context_mask)
+            model_output, features, cemb1, cemb2 = self.nn_model(xt, c, t/self.n_T, context_mask)
 
             z = torch.randn(b, *size).to(device)
 
@@ -563,12 +587,37 @@ class DDPM(nn.Module):
             x_prev = (
                 oneover_sqrta * (xt - model_output * mab_over_sqrtmab) + sqrt_beta_t * z
             )
-        
-        return x_prev, model_output
-    
-    
-    
-    
+            
+        else:
+            xt = xt.repeat(2, 1, 1, 1)
+            t = t.repeat(2, 1, 1, 1)
+            c = c.repeat(2)
+            context_mask = context_mask.repeat(2)
+            context_mask[b:] = 1. 
+            
+            z = torch.randn(b, *size).to(device)
+
+            model_output, features, cemb1, cemb2 = self.nn_model(xt, c, t/self.n_T, context_mask)
+            eps1 = model_output[:b]
+            eps2 = model_output[b:]
+            
+            model_output = model_output[:b]
+            features = [feature[:b] for feature in features]
+            
+            eps = (1 + guide_w) * eps1 - guide_w * eps2
+            
+            xt = xt[:b]
+            
+            oneover_sqrta = self.oneover_sqrta[ind].view(-1, 1, 1, 1)  # [512] -> [512, 1, 1, 1]
+            mab_over_sqrtmab = self.mab_over_sqrtmab[ind].view(-1, 1, 1, 1) 
+            sqrt_beta_t = self.sqrt_beta_t[ind].view(-1, 1, 1, 1) 
+            
+            
+            x_prev = (
+                oneover_sqrta * (xt - eps * mab_over_sqrtmab) + sqrt_beta_t * z
+            )
+            
+        return x_prev, model_output, features
     
 def train_mnist():
 

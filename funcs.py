@@ -94,7 +94,7 @@ def load_pretrained_weights(S_model, checkpoint_path):
     model_state_dict = S_model.nn_model.state_dict()
         
     # 필요한 레이어만 업데이트합니다.
-    layers_to_load = ['timeembed1', 'timeembed2', 'contextembed1', 'contextembed2']
+    layers_to_load = ['contextembed1', 'contextembed2']
     
     for layer_name in layers_to_load:
         # 해당 레이어의 가중치 키들을 가져옵니다.

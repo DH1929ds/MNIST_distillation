@@ -27,12 +27,15 @@ def get_parser():
     parser.add_argument("--pre_caching_x0", action='store_true', help='only x0 precaching')
     
     parser.add_argument("--update_cache", action='store_true', help='using x0_cache')
+    parser.add_argument("--cfg_update", action='store_true', help='using x0_cache')
+    parser.add_argument("--cond_sharing", action='store_true', help='perform condition sharing')
+    parser.add_argument("--cond_share_lambda", type=float, default=5, help="condition share lambda")
     
     parser.add_argument("--inversion_loss", action='store_true', help='using inversion_loss')
     parser.add_argument("--distill_features", action='store_true', help='perform knowledge distillation using intermediate features')
 
-
     
+
     parser.add_argument("--batch_size", type=int, default=256, help='batch size')
     parser.add_argument("--num_per_class", type=int, default=30, help='number of classes in MNIST')
 
@@ -44,8 +47,11 @@ def get_parser():
     parser.add_argument("--num_save_image", type=int, default=50, help='number of total save images in save_step')
 
 
-    parser.add_argument("--save_step", type=int, default=50, help='number of cache data')
-    parser.add_argument("--sample_step", type=int, default=5, help='number of cache data')
+    parser.add_argument("--save_step", type=int, default=50, help='save step')
+    parser.add_argument("--sample_step", type=int, default=5, help='sample step')
+    
+    parser.add_argument("--check_cache_step", type=int, default=0, help='check cache step')
+    
 
     parser.add_argument("--logdir", type=str, default='./logs/', help='log directory')
     parser.add_argument("--save_dir", type=str, default='./images/', help='save directory')
@@ -87,7 +93,7 @@ def precaching(args):
     cache_per_timestep = int(cache_size/n_T)
     
     img_cache = torch.randn((cache_size, 1, 28, 28), dtype=torch.float32, device=device)  # MNIST 이미지 크기
-    t_cache = torch.ones((cache_size,), dtype=torch.float32, device=device)*(n_T-1)
+    t_cache = torch.ones((cache_size,), dtype=torch.float32, device=device)*(n_T)
     
     selected_tensor = torch.tensor([0,1,2,4,5,6,7,8,9], device=device)
     class_cache = selected_tensor[torch.randint(0, len(selected_tensor), (cache_size,), device=device)]
@@ -115,7 +121,7 @@ def precaching(args):
             t_batch = t_cache[batch_indices]
             class_batch = class_cache[batch_indices]
 
-            x_prev, _ = T_model.cache_step(img_batch, class_batch, t_batch)
+            x_prev, _, _ = T_model.cache_step(img_batch, class_batch, t_batch)
 
             # 결과를 저장
             img_cache[batch_indices] = x_prev
@@ -241,116 +247,134 @@ def distillation_x0(args):
     # cache dataset
     
     # Dataset, DataLoader 설정
-    if args.update_cache:
-        img_cache_path = f"./{args.cache_dir}/mnist_images.pt"
-        t_cache_path = f"./{args.cache_dir}/mnist_t.pt"
-        label_cache_path = f"./{args.cache_dir}/mnist_labels.pt"
-        
-        img_cache = torch.load(img_cache_path)
-        t_cache = torch.load(t_cache_path)
-        class_cache = torch.load(label_cache_path)
-        
-        cache_dataset = MNISTDataset(img_cache, t_cache, class_cache)     
-        dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
+    img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
+    label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
+    img_cache = torch.load(img_cache_path)
+    class_cache = torch.load(label_cache_path)
+    
+    cache_dataset = MNISTDataset_x0(img_cache, class_cache)        
+    
+    dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
 
-        # trainer 설정
-        trainer = distillation_DDPM_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
+    # trainer 설정
+    trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss, 
+                                            update_c_emb = args.update_c_emb, update_c_emb_rate = args.update_c_emb_rate, update_c_emb_loss_weight = args.update_c_emb_loss_weight)
 
-        
-        # training Loop
-        for ep in range(args.n_epoch):
-            print(f'epoch {ep}')
-            S_model.train()
+    
+    # training Loop
+    for ep in range(args.n_epoch):
+        print(f'epoch {ep}')
+        S_model.train()
 
-            # linear lrate decay
-            optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+        # linear lrate decay
+        optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
 
-            pbar = tqdm(dataloader)
-            loss_ema = None
-            for x, t, c, idx in pbar:
-                optim.zero_grad()
-                x = x.to(device)
-                t = t.to(device)
-                c = c.to(device)
-                
-                noise = torch.randn_like(x)
-                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
-                total_loss.backward()
-                pbar.set_description(f"loss: {total_loss:.4f}")
-                optim.step()
-        
-            if ep % args.save_step == 0:
-                save_checkpoint(S_model, optim, ep, args.logdir)      
-                
-            if ep % args.sample_step == 0:
-                S_model.eval()
-                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)    
-                
-            ## eval ##
-            if ep % args.eval_step == 0:
-                log_path = f"{args.save_dir}/classifier_eval.log"
-                logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-                
-                S_model.eval()
+        pbar = tqdm(dataloader)
+        loss_ema = None
+        for x, c in pbar:
+            optim.zero_grad()
+            x = x.to(device)
+            c = c.to(device)
+            t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
+            x = (x * -1 + 1)
+            noise = torch.randn_like(x)
+            output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
+            total_loss.backward()
+            pbar.set_description(f"loss: {total_loss:.4f}")
+            optim.step()
+    
+        if args.save_step>0 and ep % args.save_step == 0:
+            save_checkpoint(S_model, optim, ep, args.logdir)      
+            
+        if args.sample_step and ep % args.sample_step == 0:
+            S_model.eval()
+            sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
+            
+        ## eval ##
+        if args.eval_step > 0 and ep % args.eval_step == 0:
+            log_path = f"{args.save_dir}/classifier_eval.log"
+            logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            
+            S_model.eval()
 
-                save_samples_dir = f"{args.save_dir}/output_samples"
-                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
-                logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
+            save_samples_dir = f"{args.save_dir}/output_samples"
+            test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
+            logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
 
-    else:
-        img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
-        label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
-        img_cache = torch.load(img_cache_path)
-        class_cache = torch.load(label_cache_path)
-        
-        cache_dataset = MNISTDataset_x0(img_cache, class_cache)        
-        
-        dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
 
-        # trainer 설정
-        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss, 
-                                               update_c_emb = args.update_c_emb, update_c_emb_rate = args.update_c_emb_rate, update_c_emb_loss_weight = args.update_c_emb_loss_weight)
 
-        
-        # training Loop
-        for ep in range(args.n_epoch):
-            print(f'epoch {ep}')
-            S_model.train()
+def distillation_update_cache(args):
+    device = torch.device('cuda:0')
+    model_path = "./model_39.pth"  # Replace with your actual model path
+    T_model = load_teacher_model(model_path, args.n_T)
+    
+    # S_model
+    S_model = load_student_model(args.n_T)
+    load_pretrained_weights(S_model, model_path)
+    # optimizer
+    optim = torch.optim.Adam(S_model.parameters(), lr=args.lr)
+    # cache dataset
+    
+    # Dataset, DataLoader 설정
+    img_cache_path = f"./{args.cache_dir}/mnist_images.pt"
+    t_cache_path = f"./{args.cache_dir}/mnist_t.pt"
+    label_cache_path = f"./{args.cache_dir}/mnist_labels.pt"
+    
+    img_cache = torch.load(img_cache_path)
+    t_cache = torch.load(t_cache_path)
+    class_cache = torch.load(label_cache_path)
+    
+    cache_dataset = MNISTDataset(img_cache, t_cache, class_cache, args.n_T, args.cond_sharing, args.save_dir, lambda_param=args.cond_share_lambda)     
+    dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
 
-            # linear lrate decay
-            optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+    # trainer 설정
+    trainer = distillation_DDPM_trainer(T_model, S_model, args.distill_features, args.cfg_update)
 
-            pbar = tqdm(dataloader)
-            loss_ema = None
-            for x, c in pbar:
-                optim.zero_grad()
-                x = x.to(device)
-                c = c.to(device)
-                t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
-                x = (x * -1 + 1)
-                noise = torch.randn_like(x)
-                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
-                total_loss.backward()
-                pbar.set_description(f"loss: {total_loss:.4f}")
-                optim.step()
-        
-            if args.save_step>0 and ep % args.save_step == 0:
-                save_checkpoint(S_model, optim, ep, args.logdir)      
-                
-            if args.sample_step and ep % args.sample_step == 0:
-                S_model.eval()
-                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
-                
-            ## eval ##
-            if args.eval_step > 0 and ep % args.eval_step == 0:
-                log_path = f"{args.save_dir}/classifier_eval.log"
-                logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-                
-                S_model.eval()
+    
+    # training Loop
+    for ep in range(args.n_epoch):
+        print(f'epoch {ep}')
+        S_model.train()
+        T_model.eval()
 
-                save_samples_dir = f"{args.save_dir}/output_samples"
-                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
-                logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
+        # linear lrate decay
+        optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+
+        pbar = tqdm(dataloader)
+        loss_ema = None
+        for x, t, c, indices in pbar:
+            optim.zero_grad()
+            x = x.to(device)
+            t = t.to(device)
+            c = c.to(device)
+            
+            output_loss, total_loss, x_prev = trainer(x,c,t, args.feature_loss_weight)
+            total_loss.backward()
+            pbar.set_description(f"loss: {total_loss:.4f}")
+            optim.step()
+            
+            cache_dataset.update_data(indices, x_prev)
+            
+        if args.check_cache_step > 0 and ep % args.check_cache_step == 0:
+            cache_dataset.check_cache(ep)
+    
+        if args.save_step>0 and ep % args.save_step == 0:
+            save_checkpoint(S_model, optim, ep, args.logdir)      
+            
+        if args.sample_step>0 and  ep % args.sample_step == 0:
+            S_model.eval()
+            sample_images(S_model, args.num_save_image, args.save_dir, ep, device)    
+            
+        ## eval ##
+        if args.eval_step > 0 and ep % args.eval_step == 0:
+            log_path = f"{args.save_dir}/classifier_eval.log"
+            logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            
+            S_model.eval()
+
+            save_samples_dir = f"{args.save_dir}/output_samples"
+            test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
+            logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
 
 def main(argv):
   
@@ -362,9 +386,11 @@ def main(argv):
 
     if args.pre_caching:
         precaching(args)
-
     else:
-        distillation_x0(args)
+        if args.update_cache:
+            distillation_update_cache(args)
+        else:
+            distillation_x0(args)
   
 if __name__ == "__main__":
     main(sys.argv)
